@@ -120,6 +120,7 @@ options:
 -o options, --git-options options
                         provide additional options as csv for the git command
 --version             print the version
+-P, --path            walk the provided path to clone a nested subgroup structure
 ```
 
 ### Examples
@@ -148,6 +149,9 @@ gitlabber -U .
 
 # Perform a shallow clone of the git repositories
 gitlabber -o "\-\-depth=1," .
+
+# Clone a nested subgroup
+gitlabber -P "top-level/sub-01/sub-02/sub-03" .
 ```
 
 ## Common Use Cases
