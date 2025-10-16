@@ -41,6 +41,7 @@ class GitlabTree:
                  hide_token: bool = False,
                  user_projects: bool = False,
                  group_search: Optional[str] = None,
+                 path: Optional[str] = None,
                  git_options: Optional[str] = None,
                  auth_provider: Optional[AuthProvider] = None) -> None:
         """Initialize GitlabTree.
@@ -62,6 +63,7 @@ class GitlabTree:
             hide_token: Whether to hide token in URLs
             user_projects: Whether to fetch only user projects
             group_search: Search term for filtering groups
+            path: Optional path to walk for nested subgroup structure
             git_options: Additional git options as CSV string
             auth_provider: Authentication provider (defaults to TokenAuthProvider)
             
@@ -100,6 +102,7 @@ class GitlabTree:
         self.hide_token = hide_token
         self.user_projects = user_projects
         self.group_search = group_search
+        self.path = path
         self.git_options = git_options
 
     @staticmethod
@@ -271,28 +274,141 @@ class GitlabTree:
 
     def load_gitlab_tree(self) -> None:
         """Load the GitLab tree structure."""
-        log.debug("Starting group search with archived: %s search term: %s", self.archived, self.group_search)
+        log.debug("Starting group search with archived: %s search term: %s path: %s", 
+                self.archived, self.group_search, self.path)
                     
         try:
-            groups = self.gitlab.groups.list(as_list=False, archived=self.archived, get_all=True, search=self.group_search)
-            self.progress.init_progress(len(groups))
-            for group in groups:
-                try:
-                    if group.parent_id is None:
-                        group_id = group.name if self.naming == FolderNaming.NAME else group.path
-                        node = self.make_node("group", group_id, self.root, url=group.web_url)
-                        self.progress.show_progress(node.name, 'group')
-                        self.get_subgroups(group, node)
-                        self.get_projects(group, node)
-                except Exception as e:
-                    log.error(f"Error processing group {group.name}: {str(e)}")
-                    continue
+            if self.path:
+                # Load tree starting from specific subgroup path
+                self.load_gitlab_tree_from_path()
+            else:
+                # Load tree from root groups
+                groups = self.gitlab.groups.list(as_list=False, archived=self.archived, get_all=True, search=self.group_search)
+                self.progress.init_progress(len(groups))
+                for group in groups:
+                    try:
+                        if group.parent_id is None:
+                            group_id = group.name if self.naming == FolderNaming.NAME else group.path
+                            node = self.make_node("group", group_id, self.root, url=group.web_url)
+                            self.progress.show_progress(node.name, 'group')
+                            self.get_subgroups(group, node)
+                            self.get_projects(group, node)
+                    except Exception as e:
+                        log.error(f"Error processing group {group.name}: {str(e)}")
+                        continue
 
             elapsed = self.progress.finish_progress()
             log.debug("Loading projects tree from gitlab took [%s]", elapsed)
         except Exception as e:
             log.error(f"Failed to load GitLab tree: {str(e)}")
             # Continue execution instead of raising an exception
+
+    def load_gitlab_tree_from_path(self) -> None:
+        """Load the GitLab tree structure starting from a specific path.
+        
+        Args:
+            path: Path like 'top-level/sub-01/sub-02/sub-03' to start from
+        """
+        try:
+            # Find the target group by walking the path
+            target_group = self.find_group_by_path(self.path)
+            
+            if not target_group:
+                log.error(f"Could not find group at path: {self.path}")
+                return
+                
+            log.debug(f"Found target group: {target_group.name} (ID: {target_group.id})")
+            
+            # Create the tree starting from the target group
+            self.progress.init_progress(1)  # We're processing one main group
+            
+            group_id = target_group.name if self.naming == FolderNaming.NAME else target_group.path
+            node = self.make_node("group", group_id, self.root, url=target_group.web_url)
+            self.progress.show_progress(node.name, 'group')
+            
+            # Get subgroups and projects from the target group
+            self.get_subgroups(target_group, node)
+            self.get_projects(target_group, node)
+            
+        except Exception as e:
+            log.error(f"Failed to load GitLab tree from path {self.path}: {str(e)}")
+
+    def find_group_by_path(self, path: str) -> Optional[Group]:
+        """Find a group by walking down a path like 'top-level/sub-01/sub-02/sub-03'.
+        
+        Args:
+            path: Forward-slash separated path to the target group
+            
+        Returns:
+            Group object if found, None otherwise
+        """
+        try:
+            path_parts = [part.strip() for part in path.split('/') if part.strip()]
+            
+            if not path_parts:
+                log.error("Empty path provided")
+                return None
+                
+            log.debug(f"Walking path: {' -> '.join(path_parts)}")
+            
+            # Find the root group (first part of path)
+            root_group_path = path_parts[0]
+            
+            # Search for the root group
+            groups = self.gitlab.groups.list(search=root_group_path, get_all=True)
+            root_group = None
+            
+            for group in groups:
+                # Match by path (exact match for root level)
+                if group.path == root_group_path and group.parent_id is None:
+                    root_group = group
+                    break
+            
+            if not root_group:
+                log.error(f"Could not find root group: {root_group_path}")
+                return None
+                
+            log.debug(f"Found root group: {root_group.name} (path: {root_group.path})")
+            
+            # If path has only one part, return the root group
+            if len(path_parts) == 1:
+                return root_group
+                
+            # Walk down the subgroup hierarchy
+            current_group = root_group
+            
+            for path_part in path_parts[1:]:
+                log.debug(f"Looking for subgroup: {path_part} in group: {current_group.name}")
+                
+                # Get subgroups of current group
+                try:
+                    subgroups = current_group.subgroups.list(get_all=True)
+                    found_subgroup = None
+                    
+                    for subgroup_def in subgroups:
+                        # Get full subgroup object
+                        subgroup = self.gitlab.groups.get(subgroup_def.id)
+                        if subgroup.path == path_part:
+                            found_subgroup = subgroup
+                            break
+                    
+                    if not found_subgroup:
+                        log.error(f"Could not find subgroup '{path_part}' in group '{current_group.name}'")
+                        return None
+                        
+                    current_group = found_subgroup
+                    log.debug(f"Found subgroup: {current_group.name} (path: {current_group.path})")
+                    
+                except GitlabListError as e:
+                    log.error(f"Error listing subgroups for {current_group.name}: {e.error_message}")
+                    return None
+            
+            log.debug(f"Successfully found target group: {current_group.name} at path: {path}")
+            return current_group
+            
+        except Exception as e:
+            log.error(f"Error finding group by path {path}: {str(e)}")
+            return None
 
     def load_file_tree(self) -> None:
         """Load tree structure from a YAML file."""

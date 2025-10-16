@@ -54,6 +54,7 @@ def create_mock_args(overrides: Dict[str, Any] = None) -> mock.Mock:
         "hide_token": None,
         "user_projects": None,
         "group_search": None,
+        "path": False,
         "git_options": None
     }
     if overrides:

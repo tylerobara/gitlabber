@@ -105,7 +105,8 @@ def main() -> None:
         user_projects=args.user_projects,
         group_search=args.group_search,
         git_options=args.git_options,
-        auth_provider=auth_provider
+        auth_provider=auth_provider,
+        path=args.path
     )
     tree.load_tree()
 
@@ -151,7 +152,7 @@ def parse_args(argv: Optional[List[str]] = None) -> Namespace:
         description='Gitlabber - clones or pulls entire groups/projects tree from gitlab',
         prog="gitlabber",
         epilog=example_text,
-        formatter_class=RawTextHelpFormatter)    
+        formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         'dest',
         nargs='?', 
@@ -274,6 +275,10 @@ def parse_args(argv: Optional[List[str]] = None) -> Namespace:
         '--version',
         action='store_true',
         help='print the version')
+    parser.add_argument(
+        '-P',
+        '--path',
+        metavar=('term'),
+        help='Walk the provided path to clone a nested subgroup structure (the path should be relative to the gitlab root, e.g., /top-level/sub-01/sub-02)')
 
     return parser.parse_args(argv)
-

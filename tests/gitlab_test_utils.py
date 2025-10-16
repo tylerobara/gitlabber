@@ -40,6 +40,7 @@ class MockNode:
                  archived: int = 0,
                  shared: bool = False,
                  group_search: Optional[str] = None,
+                 path: Optional[str] = None,
                  git_options: Optional[str] = None) -> None:
         self.type = type
         self.id = id
@@ -56,6 +57,7 @@ class MockNode:
         self.archived = archived
         self.shared = shared
         self.group_search = group_search
+        self.path = path
 
 
 class Listable:
